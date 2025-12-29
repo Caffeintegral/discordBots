@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build: .
+    container_name: discord_bot
+    # .envファイルから環境変数を読み込む
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    # コンテナがクラッシュした場合に自動的に再起動する
+    restart: unless-stopped
+    depends_on:
+      - voicevox-engine
+
+  voicevox-engine:
+    image: voicevox/voicevox_engine:cpu-latest
+    container_name: voicevox_engine
+    ports:
+      - "127.0.0.1:50021:50021"
+    restart: unless-stopped
