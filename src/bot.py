@@ -24,8 +24,8 @@ intents.voice_states = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ギルドごとの状態を管理
-guild_states = {}
+# サーバーごとの状態を管理
+server_states = {}
 
 
 # --- VOICEVOX連携 ---
@@ -62,22 +62,22 @@ async def create_wav(text: str):
 
 
 # --- 読み上げワーカー ---
-async def tts_worker(guild_id: int):
-    """ギルドごとの読み上げキューを処理する"""
-    state = guild_states.get(guild_id)
+async def tts_worker(server_id: int):
+    """サーバーごとの読み上げキューを処理する"""
+    state = server_states.get(server_id)
     if not state:
         return
 
-    print(f"[Guild:{guild_id}] TTSワーカーを開始しました。")
+    print(f"[Server:{server_id}] TTSワーカーを開始しました。")
     q = state['queue']
     while True:
         try:
             text_to_speak = await q.get()
-            print(f"[Guild:{guild_id}] キューからメッセージを取得: '{text_to_speak[:20]}...'")
+            print(f"[Server:{server_id}] キューからメッセージを取得: '{text_to_speak[:20]}...'")
             
             voice_client = state.get('voice_client')
             if not voice_client or not voice_client.is_connected():
-                print(f"[Guild:{guild_id}] VoiceClientが見つからないか未接続のためスキップ。")
+                print(f"[Server:{server_id}] VoiceClientが見つからないか未接続のためスキップ。")
                 q.task_done()
                 continue
 
@@ -86,20 +86,20 @@ async def tts_worker(guild_id: int):
                 source = discord.FFmpegPCMAudio(wav_data, pipe=True)
                 
                 while voice_client.is_playing():
-                    print(f"[Guild:{guild_id}] 他の音声を再生中のため待機します。")
+                    print(f"[Server:{server_id}] 他の音声を再生中のため待機します。")
                     await asyncio.sleep(0.1)
                 
-                print(f"[Guild:{guild_id}] 音声の再生を開始します。")
-                voice_client.play(source, after=lambda e: print(f'[Guild:{guild_id}] 再生完了。エラー: {e}') if e else print(f'[Guild:{guild_id}] 再生完了。'))
+                print(f"[Server:{server_id}] 音声の再生を開始します。")
+                voice_client.play(source, after=lambda e: print(f'[Server:{server_id}] 再生完了。エラー: {e}') if e else print(f'[Server:{server_id}] 再生完了。'))
             else:
-                print(f"[Guild:{guild_id}] WAVデータの生成に失敗したため、再生をスキップします。")
+                print(f"[Server:{server_id}] WAVデータの生成に失敗したため、再生をスキップします。")
             
             q.task_done()
         except asyncio.CancelledError:
-            print(f"[Guild:{guild_id}] TTSワーカーがキャンセルされました。")
+            print(f"[Server:{server_id}] TTSワーカーがキャンセルされました。")
             break
         except Exception as e:
-            print(f"Error in TTS worker for guild {guild_id}: {e}")
+            print(f"Error in TTS worker for server {server_id}: {e}")
             q.task_done()
 
 
@@ -111,10 +111,10 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s)")
-        for guild_id in guild_states:
-            if 'task' in guild_states[guild_id] and guild_states[guild_id]['task'].done():
-                 print(f"[Guild:{guild_id}] 停止していたTTSワーカーを再開します。")
-                 guild_states[guild_id]['task'] = asyncio.create_task(tts_worker(guild_id))
+        for server_id in server_states:
+            if 'task' in server_states[server_id] and server_states[server_id]['task'].done():
+                 print(f"[Server:{server_id}] 停止していたTTSワーカーを再開します。")
+                 server_states[server_id]['task'] = asyncio.create_task(tts_worker(server_id))
     except Exception as e:
         print(f"Failed to sync commands: {e}")
 
@@ -128,11 +128,15 @@ async def on_message(message: discord.Message):
     if message.content.startswith(bot.command_prefix):
          await bot.process_commands(message)
          return
-
-    state = guild_states.get(message.guild.id)
+    
+    if not message.guild:
+        return
+    
+    server_id = message.guild.id
+    state = server_states.get(server_id)
     if state and state.get('text_channel') and state['text_channel'].id == message.channel.id:
         if message.content:
-            print(f"[Guild:{message.guild.id}] メッセージをキューに追加: '{message.clean_content[:20]}...'")
+            print(f"[Server:{server_id}] メッセージをキューに追加: '{message.clean_content[:20]}...'")
             await state['queue'].put(message.clean_content)
 
 
@@ -140,7 +144,11 @@ async def on_message(message: discord.Message):
 @bot.tree.command(name="summon", description="あなたのいるボイスチャンネルに参加して、このテキストチャンネルの読み上げを開始します。")
 async def summon(interaction: discord.Interaction):
     """コマンド実行者がいるボイスチャンネルに参加する"""
-    guild_id = interaction.guild.id
+    if not interaction.guild:
+        await interaction.response.send_message("サーバー内でのみ実行できます。", ephemeral=True)
+        return
+        
+    server_id = interaction.guild.id
     
     if not interaction.user.voice or not interaction.user.voice.channel:
         await interaction.response.send_message("先にボイスチャンネルに参加してください。", ephemeral=True)
@@ -149,39 +157,39 @@ async def summon(interaction: discord.Interaction):
     voice_channel = interaction.user.voice.channel
     text_channel = interaction.channel
 
-    if guild_id in guild_states and guild_states[guild_id].get('voice_client'):
-        vc = guild_states[guild_id]['voice_client']
+    if server_id in server_states and server_states[server_id].get('voice_client'):
+        vc = server_states[server_id]['voice_client']
         if vc.is_connected():
             if vc.channel.id != voice_channel.id:
                 await vc.move_to(voice_channel)
                 await interaction.response.send_message(f"{voice_channel.name} に移動しました。")
             else:
                 await interaction.response.send_message("既に接続済みです。", ephemeral=True)
-            guild_states[guild_id]['text_channel'] = text_channel
-            print(f"[Guild:{guild_id}] 監視対象のテキストチャンネルを {text_channel.name} に変更しました。")
+            server_states[server_id]['text_channel'] = text_channel
+            print(f"[Server:{server_id}] 監視対象のテキストチャンネルを {text_channel.name} に変更しました。")
             # キューをリセットして入室メッセージを追加
-            guild_states[guild_id]['queue'] = asyncio.Queue()
-            await guild_states[guild_id]['queue'].put("シフトはいりまーす")
+            server_states[server_id]['queue'] = asyncio.Queue()
+            await server_states[server_id]['queue'].put("シフトはいりまーす")
             return
     
     try:
         vc = await voice_channel.connect()
         
-        if guild_id not in guild_states:
-            guild_states[guild_id] = {
+        if server_id not in server_states:
+            server_states[server_id] = {
                 'queue': asyncio.Queue()
             }
-            guild_states[guild_id]['task'] = asyncio.create_task(tts_worker(guild_id))
+            server_states[server_id]['task'] = asyncio.create_task(tts_worker(server_id))
 
-        guild_states[guild_id]['voice_client'] = vc
-        guild_states[guild_id]['text_channel'] = text_channel
+        server_states[server_id]['voice_client'] = vc
+        server_states[server_id]['text_channel'] = text_channel
         
         # キューをリセットして入室メッセージを追加
-        guild_states[guild_id]['queue'] = asyncio.Queue()
-        await guild_states[guild_id]['queue'].put("シフトはいりまーす")
+        server_states[server_id]['queue'] = asyncio.Queue()
+        await server_states[server_id]['queue'].put("シフトはいりまーす")
         
-        await interaction.response.send_message(f"シフトはいりまーす `{voice_channel.name}`")
-        print(f"[Guild:{guild_id}] {voice_channel.name} に接続し、{text_channel.name} の監視を開始しました。")
+        await interaction.response.send_message(f"`{voice_channel.name}` に参加し、このチャンネルの読み上げを開始します。")
+        print(f"[Server:{server_id}] {voice_channel.name} に接続し、{text_channel.name} の監視を開始しました。")
 
     except Exception as e:
         await interaction.response.send_message(f"接続に失敗しました: {e}", ephemeral=True)
@@ -190,8 +198,12 @@ async def summon(interaction: discord.Interaction):
 @bot.tree.command(name="q", description="ボイスチャンネルから退出します。")
 async def dismiss(interaction: discord.Interaction):
     """ボイスチャンネルから切断する"""
-    guild_id = interaction.guild.id
-    state = guild_states.get(guild_id)
+    if not interaction.guild:
+        await interaction.response.send_message("サーバー内でのみ実行できます。", ephemeral=True)
+        return
+
+    server_id = interaction.guild.id
+    state = server_states.get(server_id)
 
     if not state or not state.get('voice_client') or not state['voice_client'].is_connected():
         await interaction.response.send_message("ボットは現在ボイスチャンネルにいません。", ephemeral=True)
@@ -213,10 +225,10 @@ async def dismiss(interaction: discord.Interaction):
         if 'task' in state:
             state['task'].cancel()
         
-        if guild_id in guild_states:
-            del guild_states[guild_id]
+        if server_id in server_states:
+            del server_states[server_id]
 
-        print(f"[Guild:{guild_id}] ボイスチャンネルから切断しました。")
+        print(f"[Server:{server_id}] ボイスチャンネルから切断しました。")
 
     # --- 「サラダバー」の音声を生成・再生 ---
     wav_data = await create_wav("サラダバー")
