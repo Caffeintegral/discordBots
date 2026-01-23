@@ -1,9 +1,11 @@
 version: '3.8'
 
 services:
-  discord-bot:
-    build: .
-    container_name: discord_bot
+  discord-tts-bot:
+    build:
+      context: .
+      dockerfile: docker/tts/Dockerfile
+    container_name: discord_tts_bot
     # .envファイルから環境変数を読み込む
     env_file:
       - .env
@@ -13,6 +15,19 @@ services:
     restart: unless-stopped
     depends_on:
       - voicevox-engine
+
+  discord-music-bot:
+    build:
+      context: .
+      dockerfile: docker/music/Dockerfile
+    container_name: discord_music_bot
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    volumes:
+      - ./music:/app/music
 
   voicevox-engine:
     image: voicevox/voicevox_engine:cpu-latest

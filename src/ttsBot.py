@@ -12,7 +12,7 @@ else:
     print("Opusライブラリは正常にロードされています。")
 
 # --- 環境変数 ---
-TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+TOKEN = os.getenv('DISCORD_TTS_BOT_TOKEN')
 VOICEVOX_URL = os.getenv('VOICEVOX_URL', 'http://localhost:50021')
 SPEAKER_ID = os.getenv('VOICEVOX_SPEAKER_ID', 1)
 
@@ -247,7 +247,7 @@ async def dismiss(interaction: discord.Interaction):
 # --- Bot実行 ---
 if __name__ == "__main__":
     if not TOKEN:
-        print("エラー: DISCORD_BOT_TOKENが見つかりません。")
+        print("エラー: DISCORD_TTS_BOT_TOKENが見つかりません。")
     elif not VOICEVOX_URL:
         print("エラー: VOICEVOX_URLが見つかりません。")
     else:
