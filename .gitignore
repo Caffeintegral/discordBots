@@ -18,4 +18,4 @@ pip-selfcheck.json
 
 # Other
 *.log
-music/
+# music/
