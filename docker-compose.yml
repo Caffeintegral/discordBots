@@ -26,8 +26,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
-    volumes:
-      - ./music:/app/music
 
   voicevox-engine:
     image: voicevox/voicevox_engine:cpu-latest

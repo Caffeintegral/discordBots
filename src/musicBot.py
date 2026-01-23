@@ -113,8 +113,8 @@ async def play_audio(guild, text_channel, filename, seek_time=0):
         voice_client.stop()
 
     ffmpeg_options = {
-        'before_options': f'-ss {seek_time}',
-        'options': '-vn'
+        'before_options': f'-ss {seek_time} -probesize 32M -analyzeduration 32M',
+        'options': '-vn -bufsize 32M'
     }
     
     source = discord.PCMVolumeTransformer(
