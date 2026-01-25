@@ -4,10 +4,21 @@ import io
 import discord
 import aiohttp
 from discord.ext import commands
+from dotenv import load_dotenv
+import ctypes.util
+
+# .envファイルを読み込む
+load_dotenv()
 
 # --- Opusライブラリがロードされているか確認 ---
 if not discord.opus.is_loaded():
-    print("Opusライブラリがロードされていません。")
+    # Linux環境などで自動的にロードされない場合の対処
+    opus_lib = ctypes.util.find_library('opus')
+    if opus_lib:
+        discord.opus.load_opus(opus_lib)
+        print(f"Opusライブラリをロードしました: {opus_lib}")
+    else:
+        print("Opusライブラリが見つかりませんでした。apt install libopus0 を確認してください。")
 else:
     print("Opusライブラリは正常にロードされています。")
 
@@ -29,36 +40,35 @@ server_states = {}
 
 
 # --- VOICEVOX連携 ---
-async def create_wav(text: str):
+async def create_wav(text: str, session: aiohttp.ClientSession):
     """VOICEVOXエンジンと通信して音声WAVデータを生成する"""
-    async with aiohttp.ClientSession() as session:
-        try:
-            # 1. audio_query
-            params = {'text': text, 'speaker': SPEAKER_ID}
-            print(f"[{text[:10]}...] 1/2: audio_query実行")
-            async with session.post(f'{VOICEVOX_URL}/audio_query', params=params) as response:
-                if response.status != 200:
-                    print(f"Error: audio_query failed: {response.status}, {await response.text()}")
-                    return None
-                query_data = await response.json()
-            print(f"[{text[:10]}...] 1/2: audio_query成功")
+    try:
+        # 1. audio_query
+        params = {'text': text, 'speaker': SPEAKER_ID}
+        print(f"[{text[:10]}...] 1/2: audio_query実行")
+        async with session.post(f'{VOICEVOX_URL}/audio_query', params=params) as response:
+            if response.status != 200:
+                print(f"Error: audio_query failed: {response.status}, {await response.text()}")
+                return None
+            query_data = await response.json()
+        print(f"[{text[:10]}...] 1/2: audio_query成功")
 
-            # 2. synthesis
-            headers = {'Content-Type': 'application/json'}
-            print(f"[{text[:10]}...] 2/2: synthesis実行")
-            async with session.post(f'{VOICEVOX_URL}/synthesis', params={'speaker': SPEAKER_ID}, json=query_data, headers=headers) as response:
-                if response.status != 200:
-                    print(f"Error: synthesis failed: {response.status}, {await response.text()}")
-                    return None
-                wav_data = await response.read()
-                print(f"[{text[:10]}...] 2/2: synthesis成功 (サイズ: {len(wav_data)} bytes)")
-                return io.BytesIO(wav_data)
-        except aiohttp.ClientConnectorError as e:
-            print(f"Error: VOICEVOX engine not found at {VOICEVOX_URL}. Details: {e}")
-            return None
-        except Exception as e:
-            print(f"An unexpected error occurred during wav creation: {e}")
-            return None
+        # 2. synthesis
+        headers = {'Content-Type': 'application/json'}
+        print(f"[{text[:10]}...] 2/2: synthesis実行")
+        async with session.post(f'{VOICEVOX_URL}/synthesis', params={'speaker': SPEAKER_ID}, json=query_data, headers=headers) as response:
+            if response.status != 200:
+                print(f"Error: synthesis failed: {response.status}, {await response.text()}")
+                return None
+            wav_data = await response.read()
+            print(f"[{text[:10]}...] 2/2: synthesis成功 (サイズ: {len(wav_data)} bytes)")
+            return io.BytesIO(wav_data)
+    except aiohttp.ClientConnectorError as e:
+        print(f"Error: VOICEVOX engine not found at {VOICEVOX_URL}. Details: {e}")
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred during wav creation: {e}")
+        return None
 
 
 # --- 読み上げワーカー ---
@@ -70,6 +80,7 @@ async def tts_worker(server_id: int):
 
     print(f"[Server:{server_id}] TTSワーカーを開始しました。")
     q = state['queue']
+    session = bot.http_session
     while True:
         try:
             text_to_speak = await q.get()
@@ -81,7 +92,7 @@ async def tts_worker(server_id: int):
                 q.task_done()
                 continue
 
-            wav_data = await create_wav(text_to_speak)
+            wav_data = await create_wav(text_to_speak, session)
             if wav_data:
                 source = discord.FFmpegPCMAudio(wav_data, pipe=True)
                 
@@ -104,6 +115,12 @@ async def tts_worker(server_id: int):
 
 
 # --- Botイベント ---
+@bot.event
+async def setup_hook():
+    """Bot起動時にセッションを作成する"""
+    bot.http_session = aiohttp.ClientSession()
+
+
 @bot.event
 async def on_ready():
     """起動時にスラッシュコマンドを同期し、準備完了を通知する"""
@@ -231,7 +248,7 @@ async def dismiss(interaction: discord.Interaction):
         print(f"[Server:{server_id}] ボイスチャンネルから切断しました。")
 
     # --- 「サラダバー」の音声を生成・再生 ---
-    wav_data = await create_wav("サラダバー")
+    wav_data = await create_wav("サラダバー", bot.http_session)
     if wav_data and vc.is_connected():
         source = discord.FFmpegPCMAudio(wav_data, pipe=True)
         # 再生中の場合は待機
